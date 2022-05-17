@@ -1,10 +1,11 @@
+from unittest import result
 from flask import Flask, g, request
 from elasticsearch import Elasticsearch
 import os
 import time
-from google_play_scraper import PlayStore, reviews
+from google_play_scraper import reviews, Sort
 from app_store_scraper import AppStore
-import datetime as dt
+from datetime import datetime, timedelta
 import play_scraper
 
 es = Elasticsearch(['https://search-appreviews-analytics-sqvmnsmyuymtg4iielcvmisngy.ap-south-1.es.amazonaws.com'],http_auth=('elastic', 'tiw0nAfK2I+ahLxc89Dx'))
@@ -42,24 +43,44 @@ def hello():
 
 @app.route("/<platform>/<app_id>/get_reviews")
 def search(platform,app_id):
-	days = request.args.get('days')
-	if days == None:
-		days = 5
-	if platform == 'ios':
-		my_app = AppStore(
-			country='in',        # required, 2-letter code
-			app_name='swiggy-food-delivery-more', # required, found in app's url
-			app_id=989540920    # technically not required, found in app's url
-			) 
-		my_app.review(
-			after=dt.datetime(2022,5,1)
+	reviews_list = []
+	def recursive_fetch_ps_reviews(reviews_list, continuation_token=None):
+		print(reviews_list)
+		result, continuation_token = reviews(
+			app_id,
+			lang='en',
+			country = country,
+			sort = Sort.NEWEST,
+			count=150,
+			continuation_token=continuation_token
 		)
-	elif platform == 'android':
-		recursive_fetch_ps_reviews(app_id,days)
-	return {"count":len(my_app.reviews),"reviews": my_app.reviews}
+		reviews_list.extend(result)
+		print(reviews_list)
+		last_review = reviews_list[-1]
+		if last_review['at']<=req_date:
+			return
+		recursive_fetch_ps_reviews(reviews_list,continuation_token)
 
-def recursive_fetch_ps_reviews(app_id, days):
-	reviews, continuation_token = reviews()
+	days = request.args.get('days') or 5
+	country = request.args.get('country') or 'us'
+	today = datetime.today()
+	req_date = today - timedelta(days=days)
+	if platform == 'ios':
+		print(country)
+		my_app = AppStore(
+			country=country,        # required, 2-letter code
+			app_name=app_id, # required, found in app's url
+			#app_id=989540920    # technically not required, found in app's url
+			)
+		my_app.review(
+			after=req_date
+		)
+		print(my_app.reviews)
+		reviews_list = my_app.reviews
+	elif platform == 'android':
+		recursive_fetch_ps_reviews(reviews_list)
+
+	return {"count":len(reviews_list),"reviews": reviews_list}
 
 @app.route("/<platform>/<appId>/index_reviews")
 def index_reviews(platform,appId):
@@ -70,10 +91,10 @@ def index_reviews(platform,appId):
 	
 	return query_params
 
-@app.route("/search/<platform>/<name>")
-def search_apps(platform, name):
-	  if(platform == "android"):
-      	play_scraper.search()
+# @app.route("/search/<platform>/<name>")
+# def search_apps(platform, name):
+# 	  if(platform == "android"):
+#       	play_scraper.search()
 
 if __name__ == "__main__":
 	  app.run(debug=True,port=port)
